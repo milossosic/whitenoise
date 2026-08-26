@@ -1,4 +1,4 @@
-const CACHE = "noise-v16";
+const CACHE = "noise-v22";
 const ASSETS = [
   "./",
   "./index.html",
@@ -14,10 +14,6 @@ const ASSETS = [
   "./icons/icon-512.png",
   "./icons/icon-maskable-192.png",
   "./icons/icon-maskable-512.png",
-  "./icons/play.png",
-  "./icons/pause.png",
-  "./icons/plus.png",
-  "./icons/stop.png",
 ];
 
 self.addEventListener("install", (event) => {

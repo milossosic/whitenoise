@@ -1,10 +1,10 @@
 const clockEl = document.getElementById("clock");
-const clockBarEl = document.getElementById("clock-bar");
+const clockRingEl = document.getElementById("clock-ring");
 const installEl = document.getElementById("install");
 const addEl = document.getElementById("add");
 const playEl = document.getElementById("play");
-const playIconEl = document.getElementById("play-icon");
 const stopEl = document.getElementById("stop");
+const themeNameEl = document.getElementById("theme-name");
 
 let kind = "white";
 const KIND_KEY = "noise-kind";
@@ -31,6 +31,7 @@ function persistKind(value) {
 }
 
 kind = getPreferredKind();
+document.documentElement.dataset.kind = kind;
 const DEFAULT_PRESET_MS = 43_200_000;
 let presetMs = DEFAULT_PRESET_MS;
 let durationMs = DEFAULT_PRESET_MS;
@@ -69,20 +70,29 @@ function remainingMs() {
 
 function render() {
   const left = remainingMs();
-  const total = sessionTotalMs || durationMs || DEFAULT_PRESET_MS;
+  const total = sessionTotalMs || durationMs;
   const ratio = total ? Math.max(0, Math.min(1, left / total)) : 1;
+  const infinite = playing ? !endsAt : !durationMs;
   clockEl.textContent = formatTime(left);
-  clockBarEl.style.transform = `scaleX(${ratio})`;
+  clockEl.classList.toggle("is-inf", infinite);
+  if (clockRingEl) {
+    clockRingEl.style.strokeDashoffset = String(1 - ratio);
+  }
   document.body.classList.toggle("is-playing", playing);
+  document.documentElement.dataset.kind = kind;
 
   document.querySelectorAll(".type").forEach((btn) => {
     btn.classList.toggle("is-on", btn.dataset.type === kind);
   });
 
-  playEl.classList.toggle("is-on", true);
-  if (playIconEl) {
-    playIconEl.src = playing ? "./icons/pause.png" : "./icons/play.png";
-  }
+  const activeMs = playing || paused ? sessionTotalMs : durationMs;
+  document.querySelectorAll(".preset").forEach((btn) => {
+    const on = Number(btn.dataset.ms) === activeMs;
+    btn.classList.toggle("is-on", on);
+    btn.setAttribute("aria-checked", on ? "true" : "false");
+  });
+
+  playEl.classList.toggle("is-on", playing);
   playEl.setAttribute("aria-label", playing ? "Pause" : "Play");
 }
 
@@ -306,15 +316,29 @@ async function stop({ fade = 0.6, reset = false } = {}) {
 function applyKind(next) {
   kind = normalizeKind(next);
   persistKind(kind);
+  document.documentElement.dataset.kind = kind;
   if (source && source.port) source.port.postMessage({ kind });
   setMediaSession();
   render();
 }
 
 function addTime(ms) {
-  durationMs += ms;
-  sessionTotalMs += ms;
+  if (!durationMs && !playing) {
+    durationMs = ms;
+    sessionTotalMs = ms;
+  } else {
+    durationMs += ms;
+    sessionTotalMs += ms;
+  }
   if (playing) endsAt = (endsAt || Date.now()) + ms;
+  render();
+}
+
+function setDuration(ms) {
+  durationMs = ms;
+  sessionTotalMs = ms;
+  presetMs = ms;
+  if (playing) endsAt = ms ? Date.now() + ms : 0;
   render();
 }
 
@@ -345,6 +369,14 @@ document.querySelectorAll(".type").forEach((btn) => {
 addEl.addEventListener("click", () => {
   buzz();
   addTime(3_600_000);
+});
+
+document.querySelectorAll(".preset").forEach((btn) => {
+  btn.setAttribute("role", "radio");
+  btn.addEventListener("click", () => {
+    buzz();
+    setDuration(Number(btn.dataset.ms));
+  });
 });
 
 playEl.addEventListener("click", () => {
@@ -429,6 +461,8 @@ function applyTheme(theme) {
   document.querySelectorAll(".theme-swatch").forEach((btn) => {
     btn.setAttribute("aria-checked", btn.dataset.theme === next ? "true" : "false");
   });
+  const current = THEMES.find((t) => t.id === next);
+  if (themeNameEl && current) themeNameEl.textContent = current.label;
   window.setTimeout(() => root.classList.remove("theme-crossfade"), 280);
 }
 

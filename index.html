@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="sr">
+<html lang="sr" data-kind="white">
   <head>
     <meta charset="utf-8" />
     <meta
@@ -11,9 +11,12 @@
     <script>
       (function () {
         var themes = ["ember", "ink", "harbor", "velvet", "pine", "obsidian"];
+        var kinds = ["white", "brown", "pink", "fan", "soft", "ac"];
         try {
           var saved = localStorage.getItem("noise-theme");
           if (themes.indexOf(saved) >= 0) document.documentElement.dataset.theme = saved;
+          var kind = localStorage.getItem("noise-kind");
+          if (kinds.indexOf(kind) >= 0) document.documentElement.dataset.kind = kind;
         } catch (_) {}
       })();
     </script>
@@ -26,9 +29,13 @@
     <link rel="icon" href="./favicon.ico" sizes="any" />
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
-    <link rel="stylesheet" href="./styles.css?v=15" />
+    <link rel="stylesheet" href="./styles.css?v=22" />
   </head>
   <body>
+    <div class="atmosphere" aria-hidden="true">
+      <div class="bloom"></div>
+      <div class="grain"></div>
+    </div>
     <div class="app">
       <header class="top">
         <p class="brand">noise</p>
@@ -43,13 +50,13 @@
               aria-expanded="false"
               aria-haspopup="true"
             >
-              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                 <circle cx="12" cy="12" r="3" />
                 <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l-.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09A1.65 1.65 0 0 0 15 4.6a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h.09a1.65 1.65 0 0 0-1.51 1z" />
               </svg>
             </button>
             <div id="gear-menu" class="gear-menu" hidden>
-              <p class="gear-menu-label">Tema</p>
+              <p class="gear-menu-label">Tema · <span id="theme-name">Ember</span></p>
               <div id="theme-swatches" class="theme-swatches" role="radiogroup" aria-label="Tema"></div>
             </div>
           </div>
@@ -84,23 +91,45 @@
       </section>
 
       <section class="deck">
-        <div class="clock-wrap">
-          <div class="clock-bar" id="clock-bar"></div>
+        <div class="clock-block">
           <p class="clock" id="clock" aria-live="polite">12:00:00</p>
+          <div class="presets" role="radiogroup" aria-label="Tajmer">
+            <button type="button" class="preset" data-ms="1800000">30m</button>
+            <button type="button" class="preset" data-ms="3600000">1h</button>
+            <button type="button" class="preset" data-ms="28800000">8h</button>
+            <button type="button" class="preset" data-ms="43200000">12h</button>
+            <button type="button" class="preset" data-ms="0">∞</button>
+          </div>
         </div>
         <div class="controls">
-          <button type="button" class="ctrl add" id="add" aria-label="+1h">
-            <img src="./icons/plus.png" alt="" class="ctrl-icon" />
+          <button type="button" class="ctrl add" id="add" aria-label="+1 sat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+              <path d="M12 6v12M6 12h12" />
+            </svg>
           </button>
-          <button type="button" class="ctrl play is-on" id="play" aria-label="Play">
-            <img src="./icons/play.png" alt="" class="ctrl-icon" id="play-icon" />
-          </button>
+          <div class="play-wrap">
+            <svg class="play-ring" viewBox="0 0 100 100" aria-hidden="true">
+              <circle class="play-ring-track" cx="50" cy="50" r="46" />
+              <circle class="play-ring-value" id="clock-ring" cx="50" cy="50" r="46" pathLength="1" />
+            </svg>
+            <button type="button" class="ctrl play" id="play" aria-label="Play">
+              <svg class="icon-play" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M8.2 5.4v13.2L19.4 12 8.2 5.4z" />
+              </svg>
+              <svg class="icon-pause" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <rect x="6.2" y="5" width="4.4" height="14" rx="1.2" />
+                <rect x="13.4" y="5" width="4.4" height="14" rx="1.2" />
+              </svg>
+            </button>
+          </div>
           <button type="button" class="ctrl stop" id="stop" aria-label="Stop">
-            <img src="./icons/stop.png" alt="" class="ctrl-icon" />
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <rect x="6.4" y="6.4" width="11.2" height="11.2" rx="2.4" />
+            </svg>
           </button>
         </div>
       </section>
     </div>
-    <script src="./app.js?v=16" type="module"></script>
+    <script src="./app.js?v=22" type="module"></script>
   </body>
 </html>
