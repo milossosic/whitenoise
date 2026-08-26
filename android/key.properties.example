@@ -1,0 +1,4 @@
+storePassword=
+keyPassword=
+keyAlias=noise
+storeFile=release.keystore

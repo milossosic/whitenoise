@@ -236,9 +236,17 @@ const KIND_TITLE = {
   ac: "AC",
 };
 
+function isNativeApp() {
+  return !!(window.Capacitor && window.Capacitor.isNativePlatform?.());
+}
+
 function setMediaSession() {
-  if (!navigator.mediaSession) return;
   const title = KIND_TITLE[kind] || "Noise";
+  if (window.NoiseNativeMedia) {
+    window.NoiseNativeMedia.update({ title, playing, paused }).catch(() => {});
+    return;
+  }
+  if (!navigator.mediaSession) return;
   navigator.mediaSession.metadata = new MediaMetadata({
     title,
     artist: "Noise",
@@ -312,6 +320,13 @@ async function stop({ fade = 0.6, reset = false } = {}) {
   setMediaSession();
   render();
 }
+
+document.addEventListener("noise-media", (event) => {
+  const action = event.detail?.action;
+  if (action === "play") start();
+  else if (action === "pause") pause();
+  else if (action === "stop") stop({ reset: true });
+});
 
 function applyKind(next) {
   kind = normalizeKind(next);
@@ -400,6 +415,7 @@ if (navigator.mediaSession) {
 }
 
 window.addEventListener("beforeinstallprompt", (event) => {
+  if (isNativeApp()) return;
   event.preventDefault();
   installEvent = event;
   installEl.hidden = false;
@@ -417,7 +433,7 @@ window.addEventListener("appinstalled", () => {
   installEl.hidden = true;
 });
 
-if ("serviceWorker" in navigator) {
+if ("serviceWorker" in navigator && !isNativeApp()) {
   navigator.serviceWorker.register("./sw.js");
 }
 

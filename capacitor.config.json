@@ -1,0 +1,12 @@
+{
+  "appId": "com.milossosic.noise",
+  "appName": "Noise",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false,
+    "backgroundColor": "#121110"
+  }
+}
