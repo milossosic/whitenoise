@@ -7,6 +7,30 @@ const playIconEl = document.getElementById("play-icon");
 const stopEl = document.getElementById("stop");
 
 let kind = "white";
+const KIND_KEY = "noise-kind";
+const KINDS = new Set(["white", "brown", "pink", "fan", "soft", "ac"]);
+
+function normalizeKind(value) {
+  return KINDS.has(value) ? value : "white";
+}
+
+function getPreferredKind() {
+  try {
+    return normalizeKind(localStorage.getItem(KIND_KEY));
+  } catch {
+    return "white";
+  }
+}
+
+function persistKind(value) {
+  try {
+    localStorage.setItem(KIND_KEY, value);
+  } catch {
+    /* ignore */
+  }
+}
+
+kind = getPreferredKind();
 const DEFAULT_PRESET_MS = 43_200_000;
 let presetMs = DEFAULT_PRESET_MS;
 let durationMs = DEFAULT_PRESET_MS;
@@ -73,42 +97,118 @@ async function ensureAudio() {
   if (workletReady) return;
 
   try {
-    await ctx.audioWorklet.addModule("./noise-worklet.js");
+    await ctx.audioWorklet.addModule("./noise-worklet.js?v=15");
     source = new AudioWorkletNode(ctx, "noise-processor");
     source.port.postMessage({ kind });
     source.connect(gain);
     workletReady = true;
   } catch {
-    const bufferSize = 4096;
+    // Continuous fallback (same models as the worklet); never buffer-loops.
+    const bufferSize = 2048;
     const node = ctx.createScriptProcessor(bufferSize, 0, 1);
-    let brown = 0;
-    let b0 = 0;
-    let b1 = 0;
-    let b2 = 0;
-    let b3 = 0;
-    let b4 = 0;
-    let b5 = 0;
-    let b6 = 0;
+    const rate = ctx.sampleRate;
+    let seed = (Math.random() * 0xffffffff) >>> 0 || 1;
+    let phase = 0;
+    const mk = () => ({
+      brown: 0,
+      b0: 0,
+      b1: 0,
+      b2: 0,
+      b3: 0,
+      b4: 0,
+      b5: 0,
+      b6: 0,
+      lp1: 0,
+      lp2: 0,
+      lp3: 0,
+      hp: 0,
+      mid: 0,
+    });
+    const states = {
+      white: mk(),
+      brown: mk(),
+      pink: mk(),
+      fan: mk(),
+      soft: mk(),
+      ac: mk(),
+    };
+    let activeKind = kind;
+    let fadeFrom = kind;
+    let xfade = 1;
+    const xfadeInc = 1 / (rate * 0.09);
+
+    const rand = () => {
+      let s = seed | 0;
+      s ^= s << 13;
+      s ^= s >>> 17;
+      s ^= s << 5;
+      seed = s >>> 0;
+      return ((s >>> 0) / 4294967296) * 2 - 1;
+    };
+    const soft = (x) => Math.tanh(x);
+    const pink = (st, white) => {
+      st.b0 = 0.99886 * st.b0 + white * 0.0555179;
+      st.b1 = 0.99332 * st.b1 + white * 0.0750759;
+      st.b2 = 0.969 * st.b2 + white * 0.153852;
+      st.b3 = 0.8665 * st.b3 + white * 0.3104856;
+      st.b4 = 0.55 * st.b4 + white * 0.5329522;
+      st.b5 = -0.7616 * st.b5 - white * 0.016898;
+      const o = (st.b0 + st.b1 + st.b2 + st.b3 + st.b4 + st.b5 + st.b6 + white * 0.5362) * 0.11;
+      st.b6 = white * 0.115926;
+      return o;
+    };
+    const brown = (st, white) => {
+      st.brown += white * 0.02;
+      st.brown *= 0.996;
+      return st.brown * 3.2;
+    };
+    const band = (st, input, lowA, midA) => {
+      st.lp1 += lowA * (input - st.lp1);
+      st.lp2 += midA * (input - st.lp2);
+      st.hp += 0.02 * (input - st.lp1 - st.hp);
+      st.mid += midA * (input - st.lp2 - st.mid);
+    };
+    const sample = (k, white) => {
+      const st = states[k] || states.white;
+      if (k === "brown") return soft(brown(st, white));
+      if (k === "pink") return soft(pink(st, white));
+      if (k === "white") return white * 0.42;
+      const p = pink(st, white);
+      const b = brown(st, white);
+      if (k === "fan") {
+        band(st, p, 0.012, 0.05);
+        const flutter = 1 + 0.07 * Math.sin(phase * 28);
+        return soft((b * 0.22 + st.lp1 * 0.35 + st.mid * 0.55 + st.hp * 0.2) * flutter * 0.95);
+      }
+      if (k === "soft") {
+        band(st, p, 0.006, 0.028);
+        const flutter = 1 + 0.045 * Math.sin(phase * 18);
+        return soft((st.lp1 * 0.55 + st.mid * 0.28 + b * 0.18) * flutter * 1.05);
+      }
+      band(st, p * 0.7 + white * 0.3, 0.004, 0.02);
+      const throb = 1 + 0.035 * Math.sin(phase * 12);
+      return soft((b * 0.45 + st.lp1 * 0.5 + st.mid * 0.22 + st.hp * 0.08) * throb * 0.9);
+    };
+
     node.onaudioprocess = (event) => {
+      if (kind !== activeKind) {
+        fadeFrom = activeKind;
+        activeKind = kind;
+        xfade = 0;
+      }
       const out = event.outputBuffer.getChannelData(0);
+      const phaseStep = (Math.PI * 2) / rate;
       for (let i = 0; i < out.length; i++) {
-        const white = Math.random() * 2 - 1;
-        let sample = white * 0.45;
-        if (kind === "brown") {
-          brown += white * 0.02;
-          brown *= 0.996;
-          sample = Math.max(-1, Math.min(1, brown * 3.5));
-        } else if (kind === "pink") {
-          b0 = 0.99886 * b0 + white * 0.0555179;
-          b1 = 0.99332 * b1 + white * 0.0750759;
-          b2 = 0.969 * b2 + white * 0.153852;
-          b3 = 0.8665 * b3 + white * 0.3104856;
-          b4 = 0.55 * b4 + white * 0.5329522;
-          b5 = -0.7616 * b5 - white * 0.016898;
-          sample = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.11;
-          b6 = white * 0.115926;
+        phase += phaseStep;
+        if (phase > Math.PI * 2) phase -= Math.PI * 2;
+        const white = rand();
+        let v = sample(activeKind, white);
+        if (xfade < 1) {
+          const p = sample(fadeFrom, white);
+          v = p + (v - p) * xfade;
+          xfade = Math.min(1, xfade + xfadeInc);
         }
-        out[i] = sample;
+        out[i] = v;
       }
     };
     source = node;
@@ -117,9 +217,18 @@ async function ensureAudio() {
   }
 }
 
+const KIND_TITLE = {
+  white: "White noise",
+  brown: "Brown noise",
+  pink: "Pink noise",
+  fan: "Fan",
+  soft: "Soft fan",
+  ac: "AC",
+};
+
 function setMediaSession() {
   if (!navigator.mediaSession) return;
-  const title = `${kind[0].toUpperCase()}${kind.slice(1)} noise`;
+  const title = KIND_TITLE[kind] || "Noise";
   navigator.mediaSession.metadata = new MediaMetadata({
     title,
     artist: "Noise",
@@ -195,7 +304,8 @@ async function stop({ fade = 0.6, reset = false } = {}) {
 }
 
 function applyKind(next) {
-  kind = next;
+  kind = normalizeKind(next);
+  persistKind(kind);
   if (source && source.port) source.port.postMessage({ kind });
   setMediaSession();
   render();

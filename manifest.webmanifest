@@ -1,7 +1,7 @@
 {
   "name": "Noise",
   "short_name": "Noise",
-  "description": "White, brown i pink noise player",
+  "description": "White, brown, pink i ventilator noise player",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

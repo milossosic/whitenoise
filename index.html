@@ -20,13 +20,13 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Noise" />
-    <meta name="description" content="White, brown i pink noise — offline PWA" />
+    <meta name="description" content="White, brown, pink i ventilator noise — offline PWA" />
     <title>Noise</title>
     <link rel="manifest" href="./manifest.webmanifest" />
     <link rel="icon" href="./favicon.ico" sizes="any" />
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
-    <link rel="stylesheet" href="./styles.css?v=14" />
+    <link rel="stylesheet" href="./styles.css?v=15" />
   </head>
   <body>
     <div class="app">
@@ -69,6 +69,18 @@
           <span class="type-name">Pink</span>
           <span class="type-hint">meko</span>
         </button>
+        <button type="button" class="type" data-type="fan">
+          <span class="type-name">Fan</span>
+          <span class="type-hint">ventilator</span>
+        </button>
+        <button type="button" class="type" data-type="soft">
+          <span class="type-name">Soft</span>
+          <span class="type-hint">plafon</span>
+        </button>
+        <button type="button" class="type" data-type="ac">
+          <span class="type-name">AC</span>
+          <span class="type-hint">klima</span>
+        </button>
       </section>
 
       <section class="deck">
@@ -89,6 +101,6 @@
         </div>
       </section>
     </div>
-    <script src="./app.js?v=14" type="module"></script>
+    <script src="./app.js?v=16" type="module"></script>
   </body>
 </html>
