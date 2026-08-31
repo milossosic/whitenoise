@@ -1,5 +1,5 @@
 import * as esbuild from "esbuild";
-import { cpSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { cpSync, mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const root = process.cwd();
@@ -12,7 +12,6 @@ const files = [
   "index.html",
   "app.js",
   "styles.css",
-  "noise-worklet.js",
   "manifest.webmanifest",
   "sw.js",
   "favicon.ico",
@@ -27,6 +26,16 @@ for (const file of files) {
 }
 
 cpSync(join(root, "icons"), join(www, "icons"), { recursive: true });
+
+const soundsDir = join(root, "sounds");
+if (existsSync(soundsDir)) {
+  mkdirSync(join(www, "sounds"));
+  for (const name of readdirSync(soundsDir)) {
+    if (name.endsWith(".wav") || name.endsWith(".md")) {
+      cpSync(join(soundsDir, name), join(www, "sounds", name));
+    }
+  }
+}
 
 await esbuild.build({
   entryPoints: [join(root, "native-bridge.js")],

@@ -11,6 +11,7 @@ android/*.jks
 android/*.keystore
 *.apk
 *.aab
+sounds/raw/
 .DS_Store
 .idea/
 *.iml

@@ -1,10 +1,15 @@
-const CACHE = "noise-v23";
+const CACHE = "noise-v24";
 const ASSETS = [
   "./",
   "./index.html",
   "./styles.css",
   "./app.js",
-  "./noise-worklet.js",
+  "./sounds/white.wav",
+  "./sounds/brown.wav",
+  "./sounds/pink.wav",
+  "./sounds/fan.wav",
+  "./sounds/soft.wav",
+  "./sounds/ac.wav",
   "./manifest.webmanifest",
   "./favicon.ico",
   "./favicon.svg",

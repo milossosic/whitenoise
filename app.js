@@ -39,10 +39,21 @@ let sessionTotalMs = DEFAULT_PRESET_MS;
 let endsAt = 0;
 let playing = false;
 let paused = false;
+const SAMPLE_URLS = {
+  white: "./sounds/white.wav",
+  brown: "./sounds/brown.wav",
+  pink: "./sounds/pink.wav",
+  fan: "./sounds/fan.wav",
+  soft: "./sounds/soft.wav",
+  ac: "./sounds/ac.wav",
+};
+
 let ctx;
-let gain;
-let source;
-let workletReady = false;
+let master;
+let buffers = {};
+let voice = null;
+let audioReady = false;
+let loadPromise = null;
 let tickId = 0;
 let installEvent = null;
 
@@ -99,165 +110,71 @@ function render() {
 async function ensureAudio() {
   if (!ctx) {
     ctx = new AudioContext({ latencyHint: "playback" });
-    gain = ctx.createGain();
-    gain.gain.value = 0;
-    gain.connect(ctx.destination);
+    master = ctx.createGain();
+    master.gain.value = 0;
+    master.connect(ctx.destination);
   }
   if (ctx.state === "suspended") await ctx.resume();
-  if (workletReady) return;
-
-  try {
-    await ctx.audioWorklet.addModule("./noise-worklet.js?v=23");
-    source = new AudioWorkletNode(ctx, "noise-processor", {
-      numberOfInputs: 0,
-      numberOfOutputs: 1,
-      outputChannelCount: [1],
+  if (audioReady) return;
+  if (!loadPromise) {
+    loadPromise = (async () => {
+      const decoded = await Promise.all(
+        Object.entries(SAMPLE_URLS).map(async ([key, url]) => {
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`sound ${key}: ${res.status}`);
+          const data = await res.arrayBuffer();
+          return [key, await ctx.decodeAudioData(data.slice(0))];
+        }),
+      );
+      buffers = Object.fromEntries(decoded);
+      audioReady = true;
+    })().catch((err) => {
+      loadPromise = null;
+      throw err;
     });
-    source.port.postMessage({ kind });
-    source.connect(gain);
-    workletReady = true;
-  } catch {
-    // Continuous fallback (same models as the worklet); never buffer-loops.
-    const bufferSize = 4096;
-    const node = ctx.createScriptProcessor(bufferSize, 0, 1);
-    const rate = ctx.sampleRate;
-    const hz = (f) => 1 - Math.exp((-2 * Math.PI * f) / rate);
-    const a20 = hz(20);
-    const a80 = hz(80);
-    const a160 = hz(160);
-    const a350 = hz(350);
-    const a800 = hz(800);
-    const a1k5 = hz(1500);
-    const a3k = hz(3000);
-    const a6k = hz(6000);
-    const a11k = hz(11000);
-    let seed = (Math.random() * 0xffffffff) >>> 0 || 1;
-    let phase = 0;
-    let slow = 0;
-    const mk = () => ({
-      brown: 0,
-      dc: 0,
-      b0: 0,
-      b1: 0,
-      b2: 0,
-      b3: 0,
-      b4: 0,
-      b5: 0,
-      b6: 0,
-      lp1: 0,
-      lp2: 0,
-      lp3: 0,
-      lp4: 0,
-      air: 0,
-    });
-    const states = {
-      white: mk(),
-      brown: mk(),
-      pink: mk(),
-      fan: mk(),
-      soft: mk(),
-      ac: mk(),
-    };
-    let activeKind = kind;
-    let fadeFrom = kind;
-    let xfade = 1;
-    const xfadeInc = 1 / (rate * 0.1);
-
-    const rand = () => {
-      let s = seed | 0;
-      s ^= s << 13;
-      s ^= s >>> 17;
-      s ^= s << 5;
-      seed = s >>> 0;
-      return ((s >>> 0) / 4294967296) * 2 - 1;
-    };
-    const limit = (x) => {
-      const t = 0.86;
-      if (x > t) return t + Math.tanh(x - t) * 0.12;
-      if (x < -t) return -t + Math.tanh(x + t) * 0.12;
-      return x;
-    };
-    const lp = (st, key, x, a) => {
-      st[key] += a * (x - st[key]);
-      return st[key];
-    };
-    const pink = (st, white) => {
-      st.b0 = 0.99886 * st.b0 + white * 0.0555179;
-      st.b1 = 0.99332 * st.b1 + white * 0.0750759;
-      st.b2 = 0.969 * st.b2 + white * 0.153852;
-      st.b3 = 0.8665 * st.b3 + white * 0.3104856;
-      st.b4 = 0.55 * st.b4 + white * 0.5329522;
-      st.b5 = -0.7616 * st.b5 - white * 0.016898;
-      const o = (st.b0 + st.b1 + st.b2 + st.b3 + st.b4 + st.b5 + st.b6 + white * 0.5362) * 0.11;
-      st.b6 = white * 0.115926;
-      return o;
-    };
-    const brown = (st, white) => {
-      st.brown += white * 0.016;
-      st.brown *= 0.995;
-      st.dc += a20 * (st.brown - st.dc);
-      return (st.brown - st.dc) * 4.2;
-    };
-    const sample = (k, white) => {
-      const st = states[k] || states.white;
-      if (k === "white") return lp(st, "lp1", white, a11k) * 0.7;
-      if (k === "brown") return limit(brown(st, white) * 1.2);
-      if (k === "pink") return limit(pink(st, white) * 2.1);
-      const p = pink(st, white);
-      const b = brown(st, white);
-      if (k === "fan") {
-        const low = lp(st, "lp1", p, a160);
-        const mid = lp(st, "lp2", p, a800);
-        const body = mid - low;
-        const presence = lp(st, "lp3", p, a3k) - mid;
-        const blades = 1 + 0.1 * Math.sin(phase * 23) + 0.035 * Math.sin(phase * 46);
-        const motor = Math.sin(phase * 96) * (0.028 + 0.012 * low);
-        return limit((low * 0.4 + body * 0.95 + presence * 0.22 + b * 0.2 + motor) * blades * 2.25);
-      }
-      if (k === "soft") {
-        const mix = p * 0.5 + b * 0.5;
-        const a = lp(st, "lp1", mix, a160);
-        const d = lp(st, "lp2", a, a160);
-        const far = lp(st, "lp3", d, a350);
-        return limit(far * (1 + 0.14 * Math.sin(phase * 5.2)) * 2.45);
-      }
-      const deep = lp(st, "lp1", b, a80);
-      const duct = lp(st, "lp3", lp(st, "lp2", p, a160), a350);
-      const smooth = lp(st, "air", white, a6k);
-      const hiss = smooth - lp(st, "lp4", smooth, a1k5);
-      const pump = 1 + 0.08 * Math.sin(slow);
-      const hum = Math.sin(phase * 58) * (0.032 + 0.01 * deep);
-      return limit((deep * 0.85 + duct * 0.28 + hiss * 0.32 + hum) * pump * 1.85);
-    };
-
-    node.onaudioprocess = (event) => {
-      if (kind !== activeKind) {
-        fadeFrom = activeKind;
-        activeKind = kind;
-        xfade = 0;
-      }
-      const out = event.outputBuffer.getChannelData(0);
-      const phaseStep = (Math.PI * 2) / rate;
-      const slowStep = (Math.PI * 2 * 0.28) / rate;
-      for (let i = 0; i < out.length; i++) {
-        phase += phaseStep;
-        if (phase > Math.PI * 2) phase -= Math.PI * 2;
-        slow += slowStep;
-        if (slow > Math.PI * 2) slow -= Math.PI * 2;
-        const white = rand();
-        let v = sample(activeKind, white);
-        if (xfade < 1) {
-          const p = sample(fadeFrom, white);
-          v = p + (v - p) * xfade;
-          xfade = Math.min(1, xfade + xfadeInc);
-        }
-        out[i] = v;
-      }
-    };
-    source = node;
-    source.connect(gain);
-    workletReady = true;
   }
+  await loadPromise;
+}
+
+function stopVoice(fade = 0.05) {
+  if (!voice || !ctx) return;
+  const now = ctx.currentTime;
+  const old = voice;
+  voice = null;
+  try {
+    old.gain.gain.cancelScheduledValues(now);
+    old.gain.gain.setValueAtTime(old.gain.gain.value, now);
+    old.gain.gain.linearRampToValueAtTime(0, now + fade);
+    old.source.stop(now + fade + 0.03);
+  } catch {
+    /* already stopped */
+  }
+}
+
+function startVoice(nextKind, fade = 0.4) {
+  if (!ctx || !buffers[nextKind]) return;
+  const now = ctx.currentTime;
+  const source = ctx.createBufferSource();
+  source.buffer = buffers[nextKind];
+  source.loop = true;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0, now);
+  g.gain.linearRampToValueAtTime(1, now + fade);
+  source.connect(g);
+  g.connect(master);
+  source.start();
+  if (voice) {
+    const old = voice;
+    old.gain.gain.cancelScheduledValues(now);
+    old.gain.gain.setValueAtTime(Math.max(old.gain.gain.value, 0), now);
+    old.gain.gain.linearRampToValueAtTime(0, now + fade);
+    try {
+      old.source.stop(now + fade + 0.03);
+    } catch {
+      /* already stopped */
+    }
+  }
+  voice = { source, gain: g, kind: nextKind };
 }
 
 const KIND_TITLE = {
@@ -265,7 +182,7 @@ const KIND_TITLE = {
   brown: "Brown noise",
   pink: "Pink noise",
   fan: "Fan",
-  soft: "Soft fan",
+  soft: "Soft heater",
   ac: "AC",
 };
 
@@ -292,11 +209,11 @@ function setMediaSession() {
 }
 
 function fadeTo(value, seconds) {
-  if (!gain || !ctx) return;
+  if (!master || !ctx) return;
   const now = ctx.currentTime;
-  gain.gain.cancelScheduledValues(now);
-  gain.gain.setValueAtTime(gain.gain.value, now);
-  gain.gain.linearRampToValueAtTime(value, now + seconds);
+  master.gain.cancelScheduledValues(now);
+  master.gain.setValueAtTime(master.gain.value, now);
+  master.gain.linearRampToValueAtTime(value, now + seconds);
 }
 
 function restorePreset() {
@@ -316,6 +233,7 @@ async function start() {
   }
   playing = true;
   paused = false;
+  if (!voice || voice.kind !== kind) startVoice(kind, 0.45);
   fadeTo(1, 0.45);
   setMediaSession();
   render();
@@ -331,7 +249,10 @@ async function pause({ fade = 0.4 } = {}) {
   if (ctx && fade) {
     const wait = fade;
     window.setTimeout(() => {
-      if (!playing && ctx.state === "running") ctx.suspend();
+      if (!playing) {
+        stopVoice(0.05);
+        if (ctx.state === "running") ctx.suspend();
+      }
     }, wait * 1000 + 40);
   }
   setMediaSession();
@@ -345,7 +266,10 @@ async function stop({ fade = 0.6, reset = false } = {}) {
   if (ctx && fade) {
     const wait = fade;
     window.setTimeout(() => {
-      if (!playing && ctx.state === "running") ctx.suspend();
+      if (!playing) {
+        stopVoice(0.05);
+        if (ctx.state === "running") ctx.suspend();
+      }
     }, wait * 1000 + 40);
   }
   endsAt = 0;
@@ -365,7 +289,7 @@ function applyKind(next) {
   kind = normalizeKind(next);
   persistKind(kind);
   document.documentElement.dataset.kind = kind;
-  if (source && source.port) source.port.postMessage({ kind });
+  if (playing && buffers[kind]) startVoice(kind, 0.35);
   setMediaSession();
   render();
 }
