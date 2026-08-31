@@ -98,7 +98,7 @@ function render() {
 
 async function ensureAudio() {
   if (!ctx) {
-    ctx = new AudioContext();
+    ctx = new AudioContext({ latencyHint: "playback" });
     gain = ctx.createGain();
     gain.gain.value = 0;
     gain.connect(ctx.destination);
@@ -107,20 +107,36 @@ async function ensureAudio() {
   if (workletReady) return;
 
   try {
-    await ctx.audioWorklet.addModule("./noise-worklet.js?v=15");
-    source = new AudioWorkletNode(ctx, "noise-processor");
+    await ctx.audioWorklet.addModule("./noise-worklet.js?v=23");
+    source = new AudioWorkletNode(ctx, "noise-processor", {
+      numberOfInputs: 0,
+      numberOfOutputs: 1,
+      outputChannelCount: [1],
+    });
     source.port.postMessage({ kind });
     source.connect(gain);
     workletReady = true;
   } catch {
     // Continuous fallback (same models as the worklet); never buffer-loops.
-    const bufferSize = 2048;
+    const bufferSize = 4096;
     const node = ctx.createScriptProcessor(bufferSize, 0, 1);
     const rate = ctx.sampleRate;
+    const hz = (f) => 1 - Math.exp((-2 * Math.PI * f) / rate);
+    const a20 = hz(20);
+    const a80 = hz(80);
+    const a160 = hz(160);
+    const a350 = hz(350);
+    const a800 = hz(800);
+    const a1k5 = hz(1500);
+    const a3k = hz(3000);
+    const a6k = hz(6000);
+    const a11k = hz(11000);
     let seed = (Math.random() * 0xffffffff) >>> 0 || 1;
     let phase = 0;
+    let slow = 0;
     const mk = () => ({
       brown: 0,
+      dc: 0,
       b0: 0,
       b1: 0,
       b2: 0,
@@ -131,8 +147,8 @@ async function ensureAudio() {
       lp1: 0,
       lp2: 0,
       lp3: 0,
-      hp: 0,
-      mid: 0,
+      lp4: 0,
+      air: 0,
     });
     const states = {
       white: mk(),
@@ -145,7 +161,7 @@ async function ensureAudio() {
     let activeKind = kind;
     let fadeFrom = kind;
     let xfade = 1;
-    const xfadeInc = 1 / (rate * 0.09);
+    const xfadeInc = 1 / (rate * 0.1);
 
     const rand = () => {
       let s = seed | 0;
@@ -155,7 +171,16 @@ async function ensureAudio() {
       seed = s >>> 0;
       return ((s >>> 0) / 4294967296) * 2 - 1;
     };
-    const soft = (x) => Math.tanh(x);
+    const limit = (x) => {
+      const t = 0.86;
+      if (x > t) return t + Math.tanh(x - t) * 0.12;
+      if (x < -t) return -t + Math.tanh(x + t) * 0.12;
+      return x;
+    };
+    const lp = (st, key, x, a) => {
+      st[key] += a * (x - st[key]);
+      return st[key];
+    };
     const pink = (st, white) => {
       st.b0 = 0.99886 * st.b0 + white * 0.0555179;
       st.b1 = 0.99332 * st.b1 + white * 0.0750759;
@@ -168,36 +193,41 @@ async function ensureAudio() {
       return o;
     };
     const brown = (st, white) => {
-      st.brown += white * 0.02;
-      st.brown *= 0.996;
-      return st.brown * 3.2;
-    };
-    const band = (st, input, lowA, midA) => {
-      st.lp1 += lowA * (input - st.lp1);
-      st.lp2 += midA * (input - st.lp2);
-      st.hp += 0.02 * (input - st.lp1 - st.hp);
-      st.mid += midA * (input - st.lp2 - st.mid);
+      st.brown += white * 0.016;
+      st.brown *= 0.995;
+      st.dc += a20 * (st.brown - st.dc);
+      return (st.brown - st.dc) * 4.2;
     };
     const sample = (k, white) => {
       const st = states[k] || states.white;
-      if (k === "brown") return soft(brown(st, white));
-      if (k === "pink") return soft(pink(st, white));
-      if (k === "white") return white * 0.42;
+      if (k === "white") return lp(st, "lp1", white, a11k) * 0.7;
+      if (k === "brown") return limit(brown(st, white) * 1.2);
+      if (k === "pink") return limit(pink(st, white) * 2.1);
       const p = pink(st, white);
       const b = brown(st, white);
       if (k === "fan") {
-        band(st, p, 0.012, 0.05);
-        const flutter = 1 + 0.07 * Math.sin(phase * 28);
-        return soft((b * 0.22 + st.lp1 * 0.35 + st.mid * 0.55 + st.hp * 0.2) * flutter * 0.95);
+        const low = lp(st, "lp1", p, a160);
+        const mid = lp(st, "lp2", p, a800);
+        const body = mid - low;
+        const presence = lp(st, "lp3", p, a3k) - mid;
+        const blades = 1 + 0.1 * Math.sin(phase * 23) + 0.035 * Math.sin(phase * 46);
+        const motor = Math.sin(phase * 96) * (0.028 + 0.012 * low);
+        return limit((low * 0.4 + body * 0.95 + presence * 0.22 + b * 0.2 + motor) * blades * 2.25);
       }
       if (k === "soft") {
-        band(st, p, 0.006, 0.028);
-        const flutter = 1 + 0.045 * Math.sin(phase * 18);
-        return soft((st.lp1 * 0.55 + st.mid * 0.28 + b * 0.18) * flutter * 1.05);
+        const mix = p * 0.5 + b * 0.5;
+        const a = lp(st, "lp1", mix, a160);
+        const d = lp(st, "lp2", a, a160);
+        const far = lp(st, "lp3", d, a350);
+        return limit(far * (1 + 0.14 * Math.sin(phase * 5.2)) * 2.45);
       }
-      band(st, p * 0.7 + white * 0.3, 0.004, 0.02);
-      const throb = 1 + 0.035 * Math.sin(phase * 12);
-      return soft((b * 0.45 + st.lp1 * 0.5 + st.mid * 0.22 + st.hp * 0.08) * throb * 0.9);
+      const deep = lp(st, "lp1", b, a80);
+      const duct = lp(st, "lp3", lp(st, "lp2", p, a160), a350);
+      const smooth = lp(st, "air", white, a6k);
+      const hiss = smooth - lp(st, "lp4", smooth, a1k5);
+      const pump = 1 + 0.08 * Math.sin(slow);
+      const hum = Math.sin(phase * 58) * (0.032 + 0.01 * deep);
+      return limit((deep * 0.85 + duct * 0.28 + hiss * 0.32 + hum) * pump * 1.85);
     };
 
     node.onaudioprocess = (event) => {
@@ -208,9 +238,12 @@ async function ensureAudio() {
       }
       const out = event.outputBuffer.getChannelData(0);
       const phaseStep = (Math.PI * 2) / rate;
+      const slowStep = (Math.PI * 2 * 0.28) / rate;
       for (let i = 0; i < out.length; i++) {
         phase += phaseStep;
         if (phase > Math.PI * 2) phase -= Math.PI * 2;
+        slow += slowStep;
+        if (slow > Math.PI * 2) slow -= Math.PI * 2;
         const white = rand();
         let v = sample(activeKind, white);
         if (xfade < 1) {
@@ -283,7 +316,7 @@ async function start() {
   }
   playing = true;
   paused = false;
-  fadeTo(0.85, 0.45);
+  fadeTo(1, 0.45);
   setMediaSession();
   render();
 }
